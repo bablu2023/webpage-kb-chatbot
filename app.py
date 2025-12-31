@@ -1,29 +1,49 @@
 import streamlit as st
-import faiss
 import pickle
+import faiss
 import numpy as np
+import os
 
-# Load vector database
-index = faiss.read_index("kb_index.faiss")
+st.set_page_config(page_title="Webpage KB Chatbot")
 
-with open("kb_chunks.pkl", "rb") as f:
-    chunks = pickle.load(f)
+st.title("🌐 Webpage Knowledge-Base Chatbot")
+
+# ---- File checks ----
+required_files = ["chunks.txt", "tfidf_vectorizer.pkl"]
+for f in required_files:
+    if not os.path.exists(f):
+        st.error(f"Missing file: {f}")
+        st.stop()
+
+st.success("Required files found. Building index...")
+
+# ---- Load data ----
+with open("chunks.txt", "r", encoding="utf-8") as f:
+    raw = f.read()
+
+chunks = raw.split("\n--- CHUNK ")
+chunks = [c.strip() for c in chunks if len(c.strip()) > 50]
 
 with open("tfidf_vectorizer.pkl", "rb") as f:
     vectorizer = pickle.load(f)
 
-st.set_page_config(page_title="Webpage KB Chatbot", layout="centered")
+# ---- Build embeddings & FAISS INDEX (CLOUD SAFE) ----
+embeddings = vectorizer.transform(chunks).toarray().astype("float32")
 
-st.title("🌐 Webpage Knowledge-Base Chatbot")
-st.write("Ask questions based on the webpage content")
+dimension = embeddings.shape[1]
+index = faiss.IndexFlatL2(dimension)
+index.add(embeddings)
 
-query = st.text_input("Enter your question")
+st.success("FAISS index built successfully ✅")
+
+# ---- UI ----
+query = st.text_input("Ask a question")
 
 if query:
-    query_vec = vectorizer.transform([query]).toarray().astype("float32")
-    distances, indices = index.search(query_vec, k=3)
+    q_vec = vectorizer.transform([query]).toarray().astype("float32")
+    distances, indices = index.search(q_vec, k=3)
 
-    st.subheader("Answer (from webpage):")
+    st.subheader("Answer (from webpage content)")
 
     for i, idx in enumerate(indices[0], start=1):
         st.markdown(f"**Result {i}:**")
