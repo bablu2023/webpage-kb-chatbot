@@ -1,51 +1,122 @@
 import streamlit as st
-import pickle
+import requests
+from bs4 import BeautifulSoup
+from sklearn.feature_extraction.text import TfidfVectorizer
 import faiss
 import numpy as np
-import os
 
-st.set_page_config(page_title="Webpage KB Chatbot")
-
+# --------------------------------------------------
+# PAGE CONFIG
+# --------------------------------------------------
+st.set_page_config(page_title="Webpage Knowledge-Base Chatbot", layout="centered")
 st.title("🌐 Webpage Knowledge-Base Chatbot")
 
-# ---- File checks ----
-required_files = ["chunks.txt", "tfidf_vectorizer.pkl"]
-for f in required_files:
-    if not os.path.exists(f):
-        st.error(f"Missing file: {f}")
-        st.stop()
+# --------------------------------------------------
+# FUNCTIONS
+# --------------------------------------------------
 
-st.success("Required files found. Building index...")
+def read_webpage(url):
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+    response = requests.get(url, headers=headers, timeout=15)
+    response.raise_for_status()
 
-# ---- Load data ----
-with open("chunks.txt", "r", encoding="utf-8") as f:
-    raw = f.read()
+    soup = BeautifulSoup(response.text, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
 
-chunks = raw.split("\n--- CHUNK ")
-chunks = [c.strip() for c in chunks if len(c.strip()) > 50]
+    text = soup.get_text(separator=" ")
+    return " ".join(text.split())
 
-with open("tfidf_vectorizer.pkl", "rb") as f:
-    vectorizer = pickle.load(f)
 
-# ---- Build embeddings & FAISS INDEX (CLOUD SAFE) ----
-embeddings = vectorizer.transform(chunks).toarray().astype("float32")
+def chunk_text(text, chunk_size=500, overlap=50):
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        start = end - overlap
+    return chunks
 
-dimension = embeddings.shape[1]
-index = faiss.IndexFlatL2(dimension)
-index.add(embeddings)
 
-st.success("FAISS index built successfully ✅")
+def build_faiss_index(chunks):
+    vectorizer = TfidfVectorizer(
+        max_features=3000,
+        stop_words="english"
+    )
+    vectors = vectorizer.fit_transform(chunks).toarray().astype("float32")
 
-# ---- UI ----
-query = st.text_input("Ask a question")
+    index = faiss.IndexFlatL2(vectors.shape[1])
+    index.add(vectors)
+
+    return index, vectorizer
+
+
+# --------------------------------------------------
+# SESSION STATE
+# --------------------------------------------------
+if "index" not in st.session_state:
+    st.session_state.index = None
+    st.session_state.vectorizer = None
+    st.session_state.chunks = None
+
+# --------------------------------------------------
+# TRAINING SECTION
+# --------------------------------------------------
+st.subheader("🔁 Train on New Webpage")
+
+url = st.text_input(
+    "Enter webpage URL",
+    placeholder="https://en.wikipedia.org/wiki/Machine_learning"
+)
+
+if st.button("🚀 Train on New Page"):
+    if not url:
+        st.warning("Please enter a valid URL.")
+    else:
+        with st.spinner("Reading webpage and building knowledge base..."):
+            try:
+                text = read_webpage(url)
+                chunks = chunk_text(text)
+
+                index, vectorizer = build_faiss_index(chunks)
+
+                st.session_state.index = index
+                st.session_state.vectorizer = vectorizer
+                st.session_state.chunks = chunks
+
+                st.success(f"Training completed ✅ ({len(chunks)} chunks indexed)")
+            except Exception as e:
+                st.error(f"Error while training: {e}")
+
+# --------------------------------------------------
+# CHAT SECTION (LEVEL 1 FIX)
+# --------------------------------------------------
+st.subheader("💬 Ask a Question")
+
+query = st.text_input("Type your question here")
 
 if query:
-    q_vec = vectorizer.transform([query]).toarray().astype("float32")
-    distances, indices = index.search(q_vec, k=3)
+    if st.session_state.index is None:
+        st.warning("Please train on a webpage first.")
+    else:
+        # Vectorize query
+        query_vector = (
+            st.session_state.vectorizer
+            .transform([query])
+            .toarray()
+            .astype("float32")
+        )
 
-    st.subheader("Answer (from webpage content)")
+        # Search top-1 result only
+        distances, indices = st.session_state.index.search(query_vector, k=1)
 
-    for i, idx in enumerate(indices[0], start=1):
-        st.markdown(f"**Result {i}:**")
-        st.write(chunks[idx][:600])
-        st.markdown("---")
+        best_chunk = st.session_state.chunks[indices[0][0]]
+
+        st.markdown("### 📄 Answer (Most Relevant Section)")
+        st.write(best_chunk)
