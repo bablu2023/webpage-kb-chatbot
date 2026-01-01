@@ -14,7 +14,8 @@ st.set_page_config(
     page_title="Webpage RAG Chatbot",
     layout="centered"
 )
-st.title("🌐 Webpage RAG Chatbot (Level-4)")
+st.title("🌐 Webpage Knowledge-Base Chatbot")
+
 
 # --------------------------------------------------
 # OPENAI SETUP
