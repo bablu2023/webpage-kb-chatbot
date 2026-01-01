@@ -1,15 +1,29 @@
+import os
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from sklearn.feature_extraction.text import TfidfVectorizer
 import faiss
 import numpy as np
+from openai import OpenAI
 
 # --------------------------------------------------
 # PAGE CONFIG
 # --------------------------------------------------
-st.set_page_config(page_title="Webpage Knowledge-Base Chatbot", layout="centered")
-st.title("🌐 Webpage Knowledge-Base Chatbot")
+st.set_page_config(
+    page_title="Webpage RAG Chatbot",
+    layout="centered"
+)
+st.title("🌐 Webpage RAG Chatbot (Level-4)")
+
+# --------------------------------------------------
+# OPENAI SETUP
+# --------------------------------------------------
+if not os.getenv("OPENAI_API_KEY"):
+    st.error("OPENAI_API_KEY not found. Please set it in environment variables or Streamlit Secrets.")
+    st.stop()
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # --------------------------------------------------
 # FUNCTIONS
@@ -57,6 +71,27 @@ def build_faiss_index(chunks):
     return index, vectorizer
 
 
+def generate_answer(context, question):
+    prompt = f"""
+Answer the question using ONLY the context below.
+If the answer is not present, say "Answer not found in the webpage."
+
+Context:
+{context}
+
+Question:
+{question}
+
+Answer:
+"""
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        max_tokens=300
+    )
+    return response.choices[0].message.content.strip()
+
 # --------------------------------------------------
 # SESSION STATE
 # --------------------------------------------------
@@ -92,10 +127,10 @@ if st.button("🚀 Train on New Page"):
 
                 st.success(f"Training completed ✅ ({len(chunks)} chunks indexed)")
             except Exception as e:
-                st.error(f"Error while training: {e}")
+                st.error(f"Training failed: {e}")
 
 # --------------------------------------------------
-# CHAT SECTION (LEVEL 1 FIX)
+# CHAT SECTION (LEVEL-4)
 # --------------------------------------------------
 st.subheader("💬 Ask a Question")
 
@@ -113,10 +148,18 @@ if query:
             .astype("float32")
         )
 
-        # Search top-1 result only
-        distances, indices = st.session_state.index.search(query_vector, k=1)
+        # Retrieve top-3 chunks
+        distances, indices = st.session_state.index.search(query_vector, k=3)
 
-        best_chunk = st.session_state.chunks[indices[0][0]]
+        context = "\n\n".join(
+            st.session_state.chunks[idx] for idx in indices[0]
+        )
 
-        st.markdown("### 📄 Answer (Most Relevant Section)")
-        st.write(best_chunk)
+        with st.spinner("Generating answer..."):
+            answer = generate_answer(context, query)
+
+        st.markdown("### ✅ Final Answer")
+        st.write(answer)
+
+        with st.expander("🔍 Retrieved Context"):
+            st.write(context)
