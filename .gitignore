@@ -1,3 +1,7 @@
-kb_env
-__pycache__
-
+kb_env/
+__pycache__/
+.env
+*.pkl
+*.faiss
+webpage_text.txt
+pages_crawled.txt
